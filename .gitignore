@@ -6,5 +6,21 @@ __pycache__/
 *.env
 *.sqlite3
 *.log
+
+# Ignore local dashboard script and dataset
+uber_dashboard.py
+# dataset (add both case variants to be safe)
+UberDataset_In1.csv
+uberDataset_IN1.csv
+
+# devcontainer workspace configuration
+.devcontainer/
 .DS_Store
 .env
+# Virtual environment
+venv/
+
+# Large model and artifact files
+*.h5
+*.pkl
+*.pt
