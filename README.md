@@ -1,7 +1,7 @@
 
-# 🚕 Uber Trip Analysis Dashboard
+# 🚕 Uber DL Project — Uber Trips Dashboard
 
-An interactive Streamlit dashboard for analyzing Uber trip data, visualizing patterns, predicting future demand using Facebook Prophet, and comparing multiple machine learning models for trip duration prediction.
+This repository (Uber-DL_ProJect) contains a Streamlit dashboard and modelling pipelines for Uber trip analysis. The dashboard (`dashboard.py`) provides interactive EDA, forecasting (Prophet, CNN, LSTM), and ML baselines for trip duration prediction.
 
 ---
 
@@ -21,66 +21,54 @@ An interactive Streamlit dashboard for analyzing Uber trip data, visualizing pat
 
 ---
 
-## 📁 Project Structure
+## Project layout
 
 ```
-📦 Uber-Trip-Analysis/
-│
-├── uber_dashboard.py         # Main Streamlit app
-├── UberDataset_In1.csv       # Uber trip dataset
-├── requirements.txt          # Python dependencies
-└── README.md                 # Project documentation
+Uber-DL_ProJect/
+├── dashboard.py            # Streamlit app (main)
+├── Data.csv                # Example dataset (user-provided)
+├── requirements.txt        # Python dependencies
+├── cnn_model.h5            # (optional) pre-trained model — usually ignored
+├── lstm_model.h5           # (optional) pre-trained model — usually ignored
+├── assets/                 # images and media for README or app (ignored)
+└── README.md               # This file
 ```
 
 ---
 
-## 🔧 Requirements
+## Requirements
 
-To run the app, install the dependencies:
+Install dependencies from `requirements.txt`.
 
-```bash
+Windows (cmd.exe):
+
+```cmd
+python -m venv .venv
+.\.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 🔒 Required Python Libraries
+Linux / macOS:
 
-```txt
-streamlit>=1.25.0
-pandas
-numpy
-plotly
-scikit-learn
-prophet
-matplotlib
-altair
-pydeck
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
+
+Note: `tensorflow` is large. If you only need CPU support, replace `tensorflow` with `tensorflow-cpu` in `requirements.txt`.
 
 ---
 
-## 🚀 Run the Dashboard Locally
+## Run the dashboard
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/SahiRB1104/Uber-Trip-Analysis.git
-   cd Uber-Trip-Analysis
-   ```
+From the repository root, run:
 
-2. Create and activate a virtual environment (optional but recommended):
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # or .\venv\Scripts\activate on Windows
-   ```
+```cmd
+streamlit run dashboard.py
+```
 
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Run the Streamlit app:
-   ```bash
-   streamlit run uber_dashboard.py
-   ```
+Open the URL Streamlit prints in your browser.
 
 ---
 
@@ -118,3 +106,12 @@ MIT License – feel free to use, modify, and distribute.
 - Outlier detection for duration
 - Cluster analysis on routes
 - Realtime integration with Uber APIs (if available)
+
+---
+
+## Notes & tips
+
+- The default dataset file is `Data.csv`. If your file has a different name, set the CSV path in the Streamlit sidebar when running the app.
+- Prophet support is optional. The app will warn if Prophet isn't installed and skip Prophet-related features.
+- Large model files (e.g. `*.h5`, `*.pkl`) and the `assets/` folder are ignored by `.gitignore` to avoid accidentally committing heavy binaries. Use Git LFS if you need to track large models.
+

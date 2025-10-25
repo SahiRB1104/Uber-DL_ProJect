@@ -1,11 +1,4 @@
-myenv/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.env
-*.sqlite3
-*.log
+
 
 # Ignore local dashboard script and dataset
 uber_dashboard.py
@@ -24,3 +17,5 @@ venv/
 *.h5
 *.pkl
 *.pt
+# Ignore assets (images, etc.) used by the dashboard
+assets/
