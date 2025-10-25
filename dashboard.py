@@ -312,6 +312,14 @@ with tab_forecast:
 
             # store and show
             st.session_state.prophet_results = forecast_test.tail(forecast_horizon).rename(columns={'yhat':'yhat'})
+            # store evaluation arrays so we can compute ensemble metrics later
+            st.session_state.prophet_eval = {
+                'y_true': np.array(y_true).astype(float),
+                'y_pred': np.array(y_pred).astype(float),
+                'rmse': float(rmse),
+                'mae': float(mae),
+                'r2': float(r2)
+            }
             st.session_state.results_table = pd.concat([
                 st.session_state.results_table,
                 pd.DataFrame([['Prophet', rmse, mae, r2]], columns=['Model', 'RMSE', 'MAE', 'R²'])
@@ -355,6 +363,14 @@ with tab_forecast:
                 cnn_future = np.round(cnn_future_raw, 2)
 
             st.session_state.cnn_future = cnn_future
+            # store evaluation arrays for ensemble evaluation (if needed)
+            st.session_state.cnn_eval = {
+                'y_true': np.array(y_t_inv).astype(float),
+                'y_pred': np.array(y_p_inv).astype(float),
+                'rmse': float(rmse),
+                'mae': float(mae),
+                'r2': float(r2)
+            }
             st.session_state.results_table = pd.concat([
                 st.session_state.results_table,
                 pd.DataFrame([['CNN', rmse, mae, r2]], columns=['Model', 'RMSE', 'MAE', 'R²'])
@@ -379,6 +395,14 @@ with tab_forecast:
                 st.session_state.results_table,
                 pd.DataFrame([['LSTM', rmse, mae, r2]], columns=['Model', 'RMSE', 'MAE', 'R²'])
             ], ignore_index=True)
+            # store evaluation arrays for ensemble evaluation (if needed)
+            st.session_state.lstm_eval = {
+                'y_true': np.array(y_t_inv).astype(float),
+                'y_pred': np.array(y_p_inv).astype(float),
+                'rmse': float(rmse),
+                'mae': float(mae),
+                'r2': float(r2)
+            }
             st.success(f"LSTM trained. Test RMSE: {rmse:.3f}, R²: {r2:.3f}")
 
     else:
@@ -395,16 +419,63 @@ with tab_forecast:
             model_list.append(('CNN', np.array(st.session_state.cnn_future)))
 
         if len(model_list) >= 2:
-            # simple average ensemble (equal weights)
+            # simple average ensemble (equal weights) for future forecasts
             preds = np.array([m[1] for m in model_list])
             ensemble = np.mean(preds, axis=0).round(2)
             st.session_state.ensemble_future = ensemble
             st.success("Ensemble created from available model forecasts.")
-            # add to results table as comparison row (dummy metrics: not computed here)
-            st.session_state.results_table = pd.concat([
-                st.session_state.results_table,
-                pd.DataFrame([['Ensemble', np.nan, np.nan, np.nan]], columns=['Model', 'RMSE', 'MAE', 'R²'])
-            ], ignore_index=True)
+
+            # Try to compute ensemble metrics on test sets if evaluation predictions are available
+            eval_sources = []
+            for key in ('prophet_eval', 'lstm_eval', 'cnn_eval'):
+                if key in st.session_state and st.session_state[key] is not None:
+                    ev = st.session_state[key]
+                    # ensure arrays are present and non-empty
+                    if 'y_true' in ev and len(ev['y_true']) > 0 and 'y_pred' in ev and len(ev['y_pred']) > 0:
+                        eval_sources.append(ev)
+
+            if len(eval_sources) >= 2:
+                # align to the shortest evaluation length (take last values)
+                min_len = min([len(ev['y_true']) for ev in eval_sources])
+                preds_matrix = np.array([ev['y_pred'][-min_len:] for ev in eval_sources])
+                # use first eval source's y_true as reference
+                y_true_ref = eval_sources[0]['y_true'][-min_len:]
+                ensemble_pred_eval = preds_matrix.mean(axis=0)
+                # compute metrics
+                ens_rmse = float(np.sqrt(mean_squared_error(y_true_ref, ensemble_pred_eval)))
+                ens_mae = float(mean_absolute_error(y_true_ref, ensemble_pred_eval))
+                ens_r2 = float(r2_score(y_true_ref, ensemble_pred_eval))
+                # store ensemble eval
+                st.session_state.ensemble_eval = {
+                    'y_true': np.array(y_true_ref).astype(float),
+                    'y_pred': np.array(ensemble_pred_eval).astype(float),
+                    'rmse': ens_rmse,
+                    'mae': ens_mae,
+                    'r2': ens_r2
+                }
+                # append numeric metrics to results table
+                st.session_state.results_table = pd.concat([
+                    st.session_state.results_table,
+                    pd.DataFrame([['Ensemble', ens_rmse, ens_mae, ens_r2]], columns=['Model', 'RMSE', 'MAE', 'R²'])
+                ], ignore_index=True)
+            else:
+                # no detailed eval arrays available; try a sensible fallback:
+                # compute ensemble metrics as the mean of available numeric metrics
+                model_names = [m[0] for m in model_list]
+                df_res = st.session_state.results_table.copy()
+                # select numeric rows for models that participated in the ensemble
+                numeric = df_res[df_res['Model'].isin(model_names) & df_res['RMSE'].notnull()]
+                if not numeric.empty:
+                    ens_rmse = float(numeric['RMSE'].astype(float).mean())
+                    ens_mae = float(numeric['MAE'].astype(float).mean()) if 'MAE' in numeric.columns and numeric['MAE'].notnull().any() else np.nan
+                    ens_r2 = float(numeric['R²'].astype(float).mean()) if 'R²' in numeric.columns and numeric['R²'].notnull().any() else np.nan
+                else:
+                    ens_rmse = ens_mae = ens_r2 = np.nan
+
+                st.session_state.results_table = pd.concat([
+                    st.session_state.results_table,
+                    pd.DataFrame([['Ensemble', ens_rmse, ens_mae, ens_r2]], columns=['Model', 'RMSE', 'MAE', 'R²'])
+                ], ignore_index=True)
         else:
             st.warning("Need at least two model forecasts (Prophet + one DL) to build ensemble.")
 
