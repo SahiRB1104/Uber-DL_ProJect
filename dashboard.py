@@ -127,6 +127,48 @@ def prepare_window_train_test(ts_values: np.ndarray, window: int, test_ratio: fl
     X_test = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
     return X_train, X_test, y_train, y_test, scaler
 
+def prepare_window_with_test_days(ts_values: np.ndarray, window: int, test_days: int):
+    """
+    Prepare sequences for DL models and split using an explicit number of test days.
+    This aligns the DL test set with a Prophet-style holdout of `test_days` at the end
+    of the full series. Returns None if there is not enough data.
+    """
+    vals = np.array(ts_values).astype(float)
+    if len(vals) <= window + 1 or test_days <= 0:
+        return None
+    # create sequences
+    X_all, y_all = [], []
+    for i in range(len(vals) - window):
+        X_all.append(vals[i:i+window])
+        y_all.append(vals[i+window])
+    X_all = np.array(X_all)
+    y_all = np.array(y_all)
+    # determine split index so last `test_days` sequences are the test set
+    if test_days >= len(y_all):
+        return None
+    split_idx = len(X_all) - int(test_days)
+    if split_idx < 1:
+        return None
+    X_train_raw, X_test_raw = X_all[:split_idx], X_all[split_idx:]
+    y_train_raw, y_test_raw = y_all[:split_idx], y_all[split_idx:]
+    # fit scaler on train values
+    scaler = MinMaxScaler()
+    scaler.fit(y_train_raw.reshape(-1,1))
+    # scale X and y using scaler
+    def scale_set(X_raw):
+        X_scaled = []
+        for seq in X_raw:
+            X_scaled.append(scaler.transform(seq.reshape(-1,1)).flatten())
+        return np.array(X_scaled)
+    X_train = scale_set(X_train_raw)
+    X_test = scale_set(X_test_raw)
+    y_train = scaler.transform(y_train_raw.reshape(-1,1)).flatten()
+    y_test = scaler.transform(y_test_raw.reshape(-1,1)).flatten()
+    # reshape for Keras (samples, window, 1)
+    X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
+    X_test = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
+    return X_train, X_test, y_train, y_test, scaler
+
 def build_cnn(window:int):
     model = Sequential([
         Conv1D(64, kernel_size=3, activation='relu', input_shape=(window,1)),
@@ -288,13 +330,16 @@ with tab_forecast:
     epochs = st.number_input("Training Epochs", 10, 300, 160)
     forecast_horizon = st.slider("Days to Forecast Ahead", 3, 30, 7)
 
-    # --- Prophet: use train/test split to evaluate fairly ---
+    # Create a unified train/test split (days) so Prophet and DL models evaluate on the same holdout
+    global_split_idx = int(len(daily) * 0.8)
+    test_days = len(daily) - global_split_idx
+
+    # --- Prophet: use unified train/test split to evaluate fairly ---
     if PROPHET_AVAILABLE:
         if st.button("Run Prophet Forecast (train/test)"):
-            # split train/test in time order
-            split_idx = int(len(daily) * 0.8)
-            train_df = daily.iloc[:split_idx].reset_index(drop=True)
-            test_df = daily.iloc[split_idx:].reset_index(drop=True)
+            # split train/test in time order using the unified split
+            train_df = daily.iloc[:global_split_idx].reset_index(drop=True)
+            test_df = daily.iloc[global_split_idx:].reset_index(drop=True)
 
             pm = Prophet(daily_seasonality=True)
             pm.fit(train_df)
@@ -343,7 +388,8 @@ with tab_forecast:
         last_window_raw = y_vals[-int(window):]
         last_trend = np.zeros_like(last_window_raw)
 
-    prepared = prepare_window_train_test(y_model, int(window), test_ratio=0.2)
+    # prepare DL train/test using the same test_days as Prophet (align evaluation)
+    prepared = prepare_window_with_test_days(y_model, int(window), test_days)
     if prepared:
         X_train, X_test, y_train, y_test, scaler = prepared
 
