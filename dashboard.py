@@ -7,6 +7,7 @@ import numpy as np
 import plotly.express as px
 from datetime import timedelta, datetime
 import os
+import traceback
 
 # sklearn
 from sklearn.preprocessing import MinMaxScaler
@@ -15,6 +16,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 # Prophet (optional)
 try:
@@ -258,10 +261,11 @@ c2.metric("Total Miles (km)", f"{filtered_df['MILES'].sum():.2f}")
 c3.metric("Avg Duration (min)", f"{filtered_df['Duration(min)'].mean():.2f}")
 
 # Tabs
-tab1, tab_forecast, tab_ml = st.tabs([
+tab1, tab_forecast, tab_ml, tab_rag = st.tabs([
     "Data & EDA",
     "Forecasting (Prophet + CNN + LSTM)",
-    "ML Models (LR, DT, RF)"
+    "ML Models (LR, DT, RF)",
+    "RAG (Project KB)"
 ])
 
 # ---------------- Tab 1: Data & EDA ----------------
@@ -337,26 +341,32 @@ with tab_forecast:
     # --- Prophet: use unified train/test split to evaluate fairly ---
     if PROPHET_AVAILABLE:
         if st.button("Run Prophet Forecast (train/test)"):
+
             # split train/test in time order using the unified split
             train_df = daily.iloc[:global_split_idx].reset_index(drop=True)
             test_df = daily.iloc[global_split_idx:].reset_index(drop=True)
 
             pm = Prophet(daily_seasonality=True)
             pm.fit(train_df)
-            future = pm.make_future_dataframe(periods=len(test_df))
-            forecast = pm.predict(future)
-
-            # obtain out-of-sample forecast for test period
-            forecast_test = forecast[['ds','yhat']].iloc[-len(test_df):].reset_index(drop=True)
+            # test set forecast for evaluation
+            future_test = pm.make_future_dataframe(periods=len(test_df))
+            forecast_test = pm.predict(future_test)
+            test_forecast = forecast_test[['ds','yhat']].iloc[-len(test_df):].reset_index(drop=True)
             y_true = test_df['y'].values
-            y_pred = forecast_test['yhat'].values
+            y_pred = test_forecast['yhat'].values
 
             rmse = np.sqrt(mean_squared_error(y_true, y_pred))
             mae = mean_absolute_error(y_true, y_pred)
             r2 = r2_score(y_true, y_pred)
 
+            # true future forecast for forecast_horizon days
+            future_horizon = pm.make_future_dataframe(periods=len(test_df) + int(forecast_horizon))
+            forecast_horizon_df = pm.predict(future_horizon)
+            # select only the last forecast_horizon rows (true future)
+            future_forecast = forecast_horizon_df[['ds','yhat']].iloc[-int(forecast_horizon):].reset_index(drop=True)
+
             # store and show
-            st.session_state.prophet_results = forecast_test.tail(forecast_horizon).rename(columns={'yhat':'yhat'})
+            st.session_state.prophet_results = future_forecast.rename(columns={'yhat':'yhat'})
             # store evaluation arrays so we can compute ensemble metrics later
             st.session_state.prophet_eval = {
                 'y_true': np.array(y_true).astype(float),
@@ -370,7 +380,7 @@ with tab_forecast:
                 pd.DataFrame([['Prophet', rmse, mae, r2]], columns=['Model', 'RMSE', 'MAE', 'R²'])
             ], ignore_index=True)
 
-            st.success(f"Prophet trained. Test RMSE: {rmse:.3f}, R²: {r2:.3f}")
+            st.success(f"Prophet trained. Test RMSE: {rmse:.3f}, R²: {r2:.3f}. Future {forecast_horizon} days forecast generated.")
 
     else:
         st.warning("Prophet not installed. Run `pip install prophet` to enable.")
@@ -397,8 +407,21 @@ with tab_forecast:
         if st.button("Train & Forecast CNN"):
             cnn = build_cnn(int(window))
             es = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
-            history = cnn.fit(X_train, y_train, epochs=int(epochs), batch_size=16, validation_data=(X_test, y_test), callbacks=[es], verbose=0)
-            rmse, mae, r2, y_t_inv, y_p_inv = evaluate_model_keras(cnn, X_test, y_test, scaler)
+            training_ok = True
+            try:
+                history = cnn.fit(X_train, y_train, epochs=int(epochs), batch_size=16, validation_data=(X_test, y_test), callbacks=[es], verbose=0)
+            except Exception as e:
+                training_ok = False
+                tb = traceback.format_exc()
+                st.error("CNN training failed — see traceback below. The Keras session will be cleared to avoid locked state.")
+                st.text_area("Traceback (CNN training)", tb, height=240)
+                try:
+                    tf.keras.backend.clear_session()
+                except Exception:
+                    pass
+
+            if training_ok:
+                rmse, mae, r2, y_t_inv, y_p_inv = evaluate_model_keras(cnn, X_test, y_test, scaler)
             # iterative forecast from last raw window: if detrend was applied, add trend back
             cnn_future_raw = iterative_forecast_keras(cnn, last_window_raw, int(forecast_horizon), scaler, int(window))
             if detrend:
@@ -427,8 +450,21 @@ with tab_forecast:
         if st.button("Train & Forecast LSTM"):
             lstm = build_stacked_lstm(int(window))
             es = EarlyStopping(monitor='val_loss', patience=12, restore_best_weights=True)
-            history = lstm.fit(X_train, y_train, epochs=int(epochs), batch_size=16, validation_data=(X_test, y_test), callbacks=[es], verbose=0)
-            rmse, mae, r2, y_t_inv, y_p_inv = evaluate_model_keras(lstm, X_test, y_test, scaler)
+            training_ok = True
+            try:
+                history = lstm.fit(X_train, y_train, epochs=int(epochs), batch_size=16, validation_data=(X_test, y_test), callbacks=[es], verbose=0)
+            except Exception as e:
+                training_ok = False
+                tb = traceback.format_exc()
+                st.error("LSTM training failed — see traceback below. The Keras session will be cleared to avoid locked state.")
+                st.text_area("Traceback (LSTM training)", tb, height=240)
+                try:
+                    tf.keras.backend.clear_session()
+                except Exception:
+                    pass
+
+            if training_ok:
+                rmse, mae, r2, y_t_inv, y_p_inv = evaluate_model_keras(lstm, X_test, y_test, scaler)
             lstm_future_raw = iterative_forecast_keras(lstm, last_window_raw, int(forecast_horizon), scaler, int(window))
             if detrend:
                 trend_last = float(pd.Series(y_vals).rolling(7, min_periods=1).mean().iloc[-1])
@@ -528,18 +564,27 @@ with tab_forecast:
     # --- Combined Forecast Visualization ---
     st.subheader("📈 Combined Forecast Comparison")
     future_dates = pd.date_range(start=daily['ds'].max() + timedelta(days=1), periods=int(forecast_horizon))
+
     combined = pd.DataFrame({"Date": future_dates})
 
+    def safe_assign(colname, arr):
+        arr = np.array(arr).flatten()
+        n = len(combined)
+        if len(arr) > n:
+            arr = arr[-n:]
+        elif len(arr) < n:
+            arr = np.pad(arr, (0, n - len(arr)), constant_values=np.nan)
+        combined[colname] = arr
+
     if st.session_state.prophet_results is not None:
-        # For display align lengths if prophet output longer
         prophet_vals = st.session_state.prophet_results['yhat'].values
-        combined["Prophet"] = prophet_vals[-int(forecast_horizon):]
+        safe_assign("Prophet", prophet_vals)
     if st.session_state.cnn_future is not None:
-        combined["CNN"] = np.array(st.session_state.cnn_future).round(2)
+        safe_assign("CNN", st.session_state.cnn_future)
     if st.session_state.lstm_future is not None:
-        combined["LSTM"] = np.array(st.session_state.lstm_future).round(2)
+        safe_assign("LSTM", st.session_state.lstm_future)
     if st.session_state.ensemble_future is not None:
-        combined["Ensemble"] = np.array(st.session_state.ensemble_future).round(2)
+        safe_assign("Ensemble", st.session_state.ensemble_future)
 
     if len(combined.columns) > 1:
         melted = combined.melt(id_vars="Date", var_name="Model", value_name="Predicted")
@@ -604,3 +649,81 @@ with tab_ml:
         chosen = st.selectbox("Choose model", list(models.keys()))
         pred_val = models[chosen].predict(np.array([[miles_in, hour_in]]))[0]
         st.success(f"Predicted Duration ({chosen}): {pred_val:.2f} minutes")
+
+# ---------------- Tab RAG: Retrieval-Augmented QA (project-only KB) ----------------
+with tab_rag:
+    st.header("RAG — Project Knowledge Base")
+    st.write("Ask questions grounded only in the project's dataset (`Data.csv`). This RAG system uses TF-IDF retrieval over rows and a small extractive answer fallback. No external APIs required.")
+
+    # Build a simple document per row from selected columns
+    kb_cols = [c for c in ['START_DATE','START','STOP','MILES','PURPOSE'] if c in df.columns]
+    if not kb_cols:
+        st.warning("No suitable columns found in dataset to build the project KB.")
+    else:
+        # create docs: one string per row
+        docs = (df[kb_cols].astype(str).agg(' | '.join, axis=1)).tolist()
+
+        # caching in session state
+        if 'rag_docs' not in st.session_state or len(st.session_state.get('rag_docs', [])) != len(docs):
+            try:
+                vect = TfidfVectorizer(stop_words='english')
+                doc_vectors = vect.fit_transform(docs)
+                st.session_state['rag_vectorizer'] = vect
+                st.session_state['rag_doc_vectors'] = doc_vectors
+                st.session_state['rag_docs'] = docs
+                st.success(f"Indexed {len(docs)} rows from project dataset for retrieval.")
+            except Exception as e:
+                st.error(f"Failed to build RAG index: {e}")
+
+        st.write("Use the project dataset as the knowledge base. You can adjust retrieval depth and ask a question below.")
+        col_q, col_opts = st.columns([3,1])
+        with col_q:
+            query = st.text_input("Enter your question (project-only)")
+        with col_opts:
+            top_k = st.number_input("Top passages", min_value=1, max_value=10, value=3)
+            clear_idx = st.button("Rebuild index")
+
+        if clear_idx:
+            # Clear any existing index and rebuild immediately (avoid experimental_rerun)
+            for k in ['rag_vectorizer', 'rag_doc_vectors', 'rag_docs', 'rag_last_retrieved']:
+                if k in st.session_state:
+                    del st.session_state[k]
+            with st.spinner('Rebuilding project KB index...'):
+                try:
+                    docs = (df[kb_cols].astype(str).agg(' | '.join, axis=1)).tolist()
+                    vect = TfidfVectorizer(stop_words='english')
+                    doc_vectors = vect.fit_transform(docs)
+                    st.session_state['rag_vectorizer'] = vect
+                    st.session_state['rag_doc_vectors'] = doc_vectors
+                    st.session_state['rag_docs'] = docs
+                    st.success(f"Rebuilt index for {len(docs)} rows.")
+                except Exception as e:
+                    st.error(f"Failed to rebuild index: {e}")
+
+            # ensure any previously-displayed retrieved rows vanish from the UI in this run
+            try:
+                # clear local query variable so subsequent `if query:` block is skipped
+                query = ''
+            except Exception:
+                pass
+
+        if query:
+            vect = st.session_state.get('rag_vectorizer')
+            doc_vectors = st.session_state.get('rag_doc_vectors')
+            docs_state = st.session_state.get('rag_docs', [])
+            if not docs_state or vect is None or doc_vectors is None:
+                st.warning("Index not available. Rebuild or reload the app to initialize the project KB.")
+            else:
+                qv = vect.transform([query])
+                sims = cosine_similarity(qv, doc_vectors).flatten()
+                idx = np.argsort(-sims)[:int(top_k)]
+                retrieved = [{'text': docs_state[i], 'score': float(sims[i])} for i in idx]
+
+                st.subheader("Retrieved rows (top passages)")
+                for i, r in enumerate(retrieved, start=1):
+                    with st.expander(f"Row {i} — score: {r['score']:.3f}"):
+                        st.write(r['text'])
+
+               
+
+               
