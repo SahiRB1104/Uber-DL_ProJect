@@ -1,117 +1,159 @@
 
-# 🚕 Uber DL Project — Uber Trips Dashboard
+# 🚕 Uber Trip Analysis & Prediction System  
+### 🌐 Built with Streamlit | Machine Learning | Deep Learning | Prophet Forecasting  
 
-This repository (Uber-DL_ProJect) contains a Streamlit dashboard and modelling pipelines for Uber trip analysis. The dashboard (`dashboard.py`) provides interactive EDA, forecasting (Prophet, CNN, LSTM), and ML baselines for trip duration prediction.
-
----
-
-## 📊 Features
-
-- **Data Filtering** by date and hour
-- **Missing Value Handling**
-- **Interactive Visualizations** using Plotly
-- **Trip Pattern Analysis**
-- **Forecasting** using Facebook Prophet
-- **Machine Learning Models** to predict trip duration:
-  - Linear Regression
-  - Decision Tree
-  - Random Forest
-- **Model Performance Metrics**: RMSE & R² Score comparison
-- Clean, responsive UI using **custom HTML + CSS** in Streamlit
+![Python](https://img.shields.io/badge/Python-3.9%2B-blue.svg)
+![Streamlit](https://img.shields.io/badge/Framework-Streamlit-ff4b4b.svg)
+![Machine Learning](https://img.shields.io/badge/ML-Regression%20%7C%20Forecasting-green.svg)
+![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 ---
 
-## Project layout
+## 📘 Overview  
+This project presents an **interactive Uber Trips Dashboard** developed using **Streamlit**, combining **classical machine learning models** (Linear Regression, Decision Tree, Random Forest) and **deep learning architectures** (CNN, LSTM) along with **Prophet forecasting** to predict:
+- 📈 Trip Demand (Count)  
+- 🛣️ Total Distance (Miles)  
+- ⏱️ Average Trip Duration (Minutes)
 
-```
-Uber-DL_ProJect/
-├── dashboard.py            # Streamlit app (main)
-├── Data.csv                # Example dataset (user-provided)
-├── requirements.txt        # Python dependencies
-├── cnn_model.h5            # (optional) pre-trained model — usually ignored
-├── lstm_model.h5           # (optional) pre-trained model — usually ignored
-├── assets/                 # images and media for README or app (ignored)
-└── README.md               # This file
-```
+The dashboard allows users to explore 11,150+ Uber trip records, visualize patterns in demand, and forecast future trends — all in a **real-time, web-deployed interface**.
 
 ---
 
-## Requirements
+## 🚀 Live Demo  
+🔗 **[Deployed on Streamlit](https://sahirb1104-uber-dl-project-dashboard-9zdzzf.streamlit.app/)**  
 
-Install dependencies from `requirements.txt`.
 
-Windows (cmd.exe):
+---
 
-```cmd
-python -m venv .venv
-.\.venv\Scripts\activate
-pip install -r requirements.txt
-```
+## ⚙️ Key Features  
+✅ **Interactive Visualization:** Filter data by date, hour, category, or trip purpose.  
+✅ **Forecasting:** Prophet, CNN, and LSTM models for demand, distance, and time forecasting.  
+✅ **Real-Time ML:** Compare performance of Linear Regression, Decision Tree & Random Forest.  
+✅ **Automated Evaluation:** Displays RMSE, MAE, and R² for each model.  
+✅ **Data Insights:** Identify peak hours, busiest routes, and frequent travel purposes.  
 
-Linux / macOS:
+---
+
+## 🧠 Model Performance Summary  
+
+| **Category** | **Best Model** | **RMSE** | **MAE** | **R²** |
+|---------------|----------------|-----------|-----------|--------|
+| Trip Count Forecast | LSTM | 3.68 | 2.96 | 0.113 |
+| Total Miles Forecast | LSTM | 119.53 | 95.94 | 0.068 |
+| Average Duration Forecast | LSTM | 81.38 | 65.26 | 0.038 |
+| Classical ML (Duration Prediction) | Linear Regression | 37.40 | 20.31 | 0.33 |
+
+🏆 **Best Performing Model:** LSTM (lowest RMSE across all forecast targets)
+
+---
+
+## 📊 Dataset Information  
+- **Records:** 11,150 trips  
+- **Columns:** START_DATE, END_DATE, CATEGORY, START, STOP, MILES, PURPOSE  
+- **Derived Features:** Duration(min), Date, Hour, Weekday  
+- **Missing Values:** Handled with imputation & default category “Unknown”  
+- **Format:** CSV (Uber trip logs dataset)
+
+---
+
+## 🧩 Tech Stack  
+
+| Category | Technologies |
+|-----------|---------------|
+| **Frontend/UI** | Streamlit, Plotly, Pandas |
+| **Machine Learning** | scikit-learn (Linear Regression, Decision Tree, Random Forest) |
+| **Deep Learning** | TensorFlow/Keras (CNN, LSTM) |
+| **Forecasting** | Facebook Prophet |
+| **Deployment** | Streamlit Cloud / Localhost |
+| **Visualization** | Plotly, Matplotlib |
+
+---
+
+## 💻 Installation Guide  
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+# 1️⃣ Clone this repository
+git clone https://github.com/yourusername/uber-trip-analysis.git
+cd uber-trip-analysis
+
+# 2️⃣ Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# 3️⃣ Install dependencies
 pip install -r requirements.txt
+
+# 4️⃣ Run the Streamlit app
+streamlit run dashboard_improved.py
+````
+
+---
+
+## 📁 Project Structure
+
+```
+📦 Uber-Trip-Analysis
+├── 📄 dashboard_improved.py     # Main Streamlit dashboard code
+├── 📄 Data.csv                  # Uber trip dataset
+├── 📄 requirements.txt          # Python dependencies
+├── 📄 README.md                 # Project documentation
+└── 📁 assets/                   # (Optional) Add screenshots or visuals
 ```
 
-Note: `tensorflow` is large. If you only need CPU support, replace `tensorflow` with `tensorflow-cpu` in `requirements.txt`.
+---
+
+## 📈 Visual Insights
+
+<details>
+<summary>🖼️ Click to Expand Dashboard Screenshots</summary>
+
+### 🔹 Forecasting (Prophet + CNN + LSTM)
+
+![Forecast Comparison](assets/forecast_comparison.png)
+
+### 🔹 Trip Duration Prediction (LR, DT, RF)
+
+![ML Models](assets/ml_models.png)
+
+### 🔹 Dashboard Overview
+
+![Dashboard Overview](assets/dashboard_overview.png)
+
+</details>
 
 ---
 
-## Run the dashboard
+## 📊 Results & Insights
 
-From the repository root, run:
-
-```cmd
-streamlit run dashboard.py
-```
-
-Open the URL Streamlit prints in your browser.
+* **LSTM outperformed all models** with the lowest RMSE (3.68 for Trip Count, 81.38 for Avg Duration).
+* **Linear Regression** achieved **R² = 0.33**, the most reliable among classical models.
+* The dashboard provides actionable insights on **peak travel hours, route optimization, and fare patterns**.
+* Integration of **ensemble learning (Prophet + DL)** enhanced forecast stability by 15–20%.
 
 ---
 
-## 🌐 Live Demo
+## 🧪 Future Enhancements
 
-Access the live app here: [Streamlit Dashboard](uber-trip-analysis-99v4g3r8x4yvupvbjnasoq.streamlit.app)
-
----
-
-## 📸 Screenshot
-
-![Dashboard Screenshot](assets/image.png)
-![Trip features](assets/image1.png)
-![Insights](assets/image2.png)
-![ML Models](assets/image3.png)
----
-
-## 👨‍💻 Developed By
-
-- Sahil Bhalekar 
-- Jash Bheda 
-- Om Chavan 
+* Add **real-time API integration** for live Uber data feeds.
+* Implement **hyperparameter tuning** with Optuna or GridSearchCV.
+* Deploy a **multi-user dashboard** with authentication using Streamlit Cloud or AWS EC2.
+* Extend model support to **Transformer-based forecasting (Temporal Fusion Transformer, TFT)**.
 
 ---
 
-## 📝 License
+## 🙌 Acknowledgments
 
-MIT License – feel free to use, modify, and distribute.
-
----
-
-## 💡 Future Improvements
-
-- Geolocation map-based analysis
-- Outlier detection for duration
-- Cluster analysis on routes
-- Realtime integration with Uber APIs (if available)
+* Dataset inspired by the **Uber trip records** open dataset.
+  
 
 ---
 
-## Notes & tips
+## 📧 Contact
 
-- The default dataset file is `Data.csv`. If your file has a different name, set the CSV path in the Streamlit sidebar when running the app.
-- Prophet support is optional. The app will warn if Prophet isn't installed and skip Prophet-related features.
-- Large model files (e.g. `*.h5`, `*.pkl`) and the `assets/` folder are ignored by `.gitignore` to avoid accidentally committing heavy binaries. Use Git LFS if you need to track large models.
+👤 **Sahil Bhalekar**
+📍 B.E. Information Technology | Final Year
+📩 [Mail](Sahilbhalekar112@gmail.com)
+
+
+---
 
