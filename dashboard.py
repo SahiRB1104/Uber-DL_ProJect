@@ -54,8 +54,29 @@ def validate_columns(df):
     missing = REQUIRED_COLS - set(df.columns)
     return missing
 
+
+def build_data_signature(csv_path: str, parquet_path: str) -> tuple:
+    """Create a lightweight fingerprint so Streamlit cache refreshes on data changes."""
+    csv_exists = os.path.exists(csv_path)
+    csv_mtime = os.path.getmtime(csv_path) if csv_exists else 0.0
+    csv_size = os.path.getsize(csv_path) if csv_exists else 0
+
+    parquet_exists = parquet_path and os.path.exists(parquet_path)
+    parquet_files = 0
+    parquet_latest_mtime = 0.0
+    if parquet_exists:
+        for root, _, files in os.walk(parquet_path):
+            for name in files:
+                if name.endswith(".parquet"):
+                    parquet_files += 1
+                    file_mtime = os.path.getmtime(os.path.join(root, name))
+                    if file_mtime > parquet_latest_mtime:
+                        parquet_latest_mtime = file_mtime
+
+    return (csv_exists, csv_mtime, csv_size, bool(parquet_exists), parquet_files, parquet_latest_mtime)
+
 @st.cache_data(show_spinner=False)
-def load_and_prepare(path="Data.csv", curated_parquet_path="data/curated_trips", prefer_parquet=True):
+def load_and_prepare(path="Data.csv", curated_parquet_path="data/curated_trips", prefer_parquet=True, data_signature=None):
     source_used = "csv"
     # Prefer curated parquet produced by Spark ETL when available.
     if prefer_parquet and curated_parquet_path and os.path.exists(curated_parquet_path):
@@ -248,9 +269,10 @@ st.sidebar.title("Settings")
 data_path = st.sidebar.text_input("CSV path", "Data.csv")
 curated_parquet_path = st.sidebar.text_input("Curated parquet path (Spark output)", "data/curated_trips")
 prefer_parquet = st.sidebar.checkbox("Prefer curated parquet if available", value=True)
+data_signature = build_data_signature(data_path, curated_parquet_path)
 
 try:
-    df, source_used = load_and_prepare(data_path, curated_parquet_path, prefer_parquet)
+    df, source_used = load_and_prepare(data_path, curated_parquet_path, prefer_parquet, data_signature)
 except Exception as e:
     st.sidebar.error(f"Failed to load dataset: {e}")
     st.stop()
