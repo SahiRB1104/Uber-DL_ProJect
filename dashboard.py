@@ -8,6 +8,10 @@ import plotly.express as px
 from datetime import timedelta, datetime
 import os
 
+# Reduce TensorFlow startup informational logs and oneDNN numerical variability warnings.
+os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+
 # sklearn
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
@@ -27,7 +31,7 @@ except Exception:
 # TensorFlow / Keras
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv1D, MaxPooling1D, Dropout, Flatten, Dense, LSTM, Bidirectional
+from tensorflow.keras.layers import Input, Conv1D, MaxPooling1D, Dropout, Flatten, Dense, LSTM, Bidirectional
 from tensorflow.keras.callbacks import EarlyStopping
 
 # reproducibility
@@ -51,8 +55,18 @@ def validate_columns(df):
     return missing
 
 @st.cache_data(show_spinner=False)
-def load_and_prepare(path="Data.csv"):
-    df = pd.read_csv(path)
+def load_and_prepare(path="Data.csv", curated_parquet_path="data/curated_trips", prefer_parquet=True):
+    source_used = "csv"
+    # Prefer curated parquet produced by Spark ETL when available.
+    if prefer_parquet and curated_parquet_path and os.path.exists(curated_parquet_path):
+        try:
+            df = pd.read_parquet(curated_parquet_path)
+            source_used = "parquet"
+        except Exception:
+            df = pd.read_csv(path)
+    else:
+        df = pd.read_csv(path)
+
     df.columns = df.columns.str.strip()
     missing = validate_columns(df)
     if missing:
@@ -66,7 +80,7 @@ def load_and_prepare(path="Data.csv"):
     df['Hour'] = df['START_DATE'].dt.hour
     df['Weekday'] = df['START_DATE'].dt.day_name()
     df['PURPOSE'] = df['PURPOSE'].fillna('Unknown')
-    return df
+    return df, source_used
 
 def series_from_target(filtered_df, target: str):
     if target == "Trip Count":
@@ -171,7 +185,8 @@ def prepare_window_with_test_days(ts_values: np.ndarray, window: int, test_days:
 
 def build_cnn(window:int):
     model = Sequential([
-        Conv1D(64, kernel_size=3, activation='relu', input_shape=(window,1)),
+        Input(shape=(window,1)),
+        Conv1D(64, kernel_size=3, activation='relu'),
         Conv1D(64, kernel_size=3, activation='relu'),
         MaxPooling1D(pool_size=2),
         Dropout(0.3),
@@ -184,7 +199,8 @@ def build_cnn(window:int):
 
 def build_stacked_lstm(window:int):
     model = Sequential([
-        Bidirectional(LSTM(128, return_sequences=True), input_shape=(window,1)),
+        Input(shape=(window,1)),
+        Bidirectional(LSTM(128, return_sequences=True)),
         Dropout(0.3),
         LSTM(64, return_sequences=False),
         Dropout(0.2),
@@ -221,15 +237,25 @@ def iterative_forecast_keras(model, last_window_raw, horizon, scaler, window):
     out = scaler.inverse_transform(np.array(out_scaled).reshape(-1,1)).flatten()
     return out
 
+def append_result_row(results_df: pd.DataFrame, model_name: str, rmse: float, mae: float, r2: float) -> pd.DataFrame:
+    row = {'Model': model_name, 'RMSE': float(rmse), 'MAE': float(mae), 'R²': float(r2)}
+    if results_df.empty:
+        return pd.DataFrame([row], columns=['Model', 'RMSE', 'MAE', 'R²'])
+    return pd.concat([results_df, pd.DataFrame([row])], ignore_index=True)
+
 # ----------------- UI & Data load -----------------
 st.sidebar.title("Settings")
 data_path = st.sidebar.text_input("CSV path", "Data.csv")
+curated_parquet_path = st.sidebar.text_input("Curated parquet path (Spark output)", "data/curated_trips")
+prefer_parquet = st.sidebar.checkbox("Prefer curated parquet if available", value=True)
 
 try:
-    df = load_and_prepare(data_path)
+    df, source_used = load_and_prepare(data_path, curated_parquet_path, prefer_parquet)
 except Exception as e:
     st.sidebar.error(f"Failed to load dataset: {e}")
     st.stop()
+
+st.sidebar.caption(f"Data source in use: {source_used}")
 
 min_date = df['START_DATE'].min().date()
 max_date = df['START_DATE'].max().date()
@@ -311,8 +337,8 @@ with tab_forecast:
         st.session_state.cnn_future = None
     if 'lstm_future' not in st.session_state:
         st.session_state.lstm_future = None
-    if 'ensemble_future' not in st.session_state:
-        st.session_state.ensemble_future = None
+    # if 'ensemble_future' not in st.session_state:
+    #     st.session_state.ensemble_future = None
 
     # Select forecasting target
     target = st.selectbox("Select Target for Forecasting", ["Trip Count", "Total Miles", "Avg Duration (min)"])
@@ -365,10 +391,9 @@ with tab_forecast:
                 'mae': float(mae),
                 'r2': float(r2)
             }
-            st.session_state.results_table = pd.concat([
-                st.session_state.results_table,
-                pd.DataFrame([['Prophet', rmse, mae, r2]], columns=['Model', 'RMSE', 'MAE', 'R²'])
-            ], ignore_index=True)
+            st.session_state.results_table = append_result_row(
+                st.session_state.results_table, 'Prophet', rmse, mae, r2
+            )
 
             st.success(f"Prophet trained. Test RMSE: {rmse:.3f}, R²: {r2:.3f}")
 
@@ -417,10 +442,9 @@ with tab_forecast:
                 'mae': float(mae),
                 'r2': float(r2)
             }
-            st.session_state.results_table = pd.concat([
-                st.session_state.results_table,
-                pd.DataFrame([['CNN', rmse, mae, r2]], columns=['Model', 'RMSE', 'MAE', 'R²'])
-            ], ignore_index=True)
+            st.session_state.results_table = append_result_row(
+                st.session_state.results_table, 'CNN', rmse, mae, r2
+            )
             st.success(f"CNN trained. Test RMSE: {rmse:.3f}, R²: {r2:.3f}")
 
         # build and train LSTM
@@ -437,10 +461,9 @@ with tab_forecast:
                 lstm_future = np.round(lstm_future_raw, 2)
 
             st.session_state.lstm_future = lstm_future
-            st.session_state.results_table = pd.concat([
-                st.session_state.results_table,
-                pd.DataFrame([['LSTM', rmse, mae, r2]], columns=['Model', 'RMSE', 'MAE', 'R²'])
-            ], ignore_index=True)
+            st.session_state.results_table = append_result_row(
+                st.session_state.results_table, 'LSTM', rmse, mae, r2
+            )
             # store evaluation arrays for ensemble evaluation (if needed)
             st.session_state.lstm_eval = {
                 'y_true': np.array(y_t_inv).astype(float),
@@ -455,75 +478,75 @@ with tab_forecast:
         st.warning("Not enough sequential data for CNN/LSTM with the chosen window size.")
 
     # --- Ensemble (Prophet + LSTM) optional ---
-    if st.button("Make Ensemble (Prophet + DL)"):
-        model_list = []
-        if st.session_state.prophet_results is not None:
-            model_list.append(('Prophet', st.session_state.prophet_results['yhat'].values[-forecast_horizon:]))
-        if st.session_state.lstm_future is not None:
-            model_list.append(('LSTM', np.array(st.session_state.lstm_future)))
-        if st.session_state.cnn_future is not None:
-            model_list.append(('CNN', np.array(st.session_state.cnn_future)))
+    # if st.button("Make Ensemble (Prophet + DL)"):
+    #     model_list = []
+    #     if st.session_state.prophet_results is not None:
+    #         model_list.append(('Prophet', st.session_state.prophet_results['yhat'].values[-forecast_horizon:]))
+    #     if st.session_state.lstm_future is not None:
+    #         model_list.append(('LSTM', np.array(st.session_state.lstm_future)))
+    #     if st.session_state.cnn_future is not None:
+    #         model_list.append(('CNN', np.array(st.session_state.cnn_future)))
 
-        if len(model_list) >= 2:
-            # simple average ensemble (equal weights) for future forecasts
-            preds = np.array([m[1] for m in model_list])
-            ensemble = np.mean(preds, axis=0).round(2)
-            st.session_state.ensemble_future = ensemble
-            st.success("Ensemble created from available model forecasts.")
+    #     if len(model_list) >= 2:
+    #         # simple average ensemble (equal weights) for future forecasts
+    #         preds = np.array([m[1] for m in model_list])
+    #         ensemble = np.mean(preds, axis=0).round(2)
+    #         st.session_state.ensemble_future = ensemble
+    #         st.success("Ensemble created from available model forecasts.")
 
-            # Try to compute ensemble metrics on test sets if evaluation predictions are available
-            eval_sources = []
-            for key in ('prophet_eval', 'lstm_eval', 'cnn_eval'):
-                if key in st.session_state and st.session_state[key] is not None:
-                    ev = st.session_state[key]
-                    # ensure arrays are present and non-empty
-                    if 'y_true' in ev and len(ev['y_true']) > 0 and 'y_pred' in ev and len(ev['y_pred']) > 0:
-                        eval_sources.append(ev)
+    #         # Try to compute ensemble metrics on test sets if evaluation predictions are available
+    #         eval_sources = []
+    #         for key in ('prophet_eval', 'lstm_eval', 'cnn_eval'):
+    #             if key in st.session_state and st.session_state[key] is not None:
+    #                 ev = st.session_state[key]
+    #                 # ensure arrays are present and non-empty
+    #                 if 'y_true' in ev and len(ev['y_true']) > 0 and 'y_pred' in ev and len(ev['y_pred']) > 0:
+    #                     eval_sources.append(ev)
 
-            if len(eval_sources) >= 2:
-                # align to the shortest evaluation length (take last values)
-                min_len = min([len(ev['y_true']) for ev in eval_sources])
-                preds_matrix = np.array([ev['y_pred'][-min_len:] for ev in eval_sources])
-                # use first eval source's y_true as reference
-                y_true_ref = eval_sources[0]['y_true'][-min_len:]
-                ensemble_pred_eval = preds_matrix.mean(axis=0)
-                # compute metrics
-                ens_rmse = float(np.sqrt(mean_squared_error(y_true_ref, ensemble_pred_eval)))
-                ens_mae = float(mean_absolute_error(y_true_ref, ensemble_pred_eval))
-                ens_r2 = float(r2_score(y_true_ref, ensemble_pred_eval))
-                # store ensemble eval
-                st.session_state.ensemble_eval = {
-                    'y_true': np.array(y_true_ref).astype(float),
-                    'y_pred': np.array(ensemble_pred_eval).astype(float),
-                    'rmse': ens_rmse,
-                    'mae': ens_mae,
-                    'r2': ens_r2
-                }
-                # append numeric metrics to results table
-                st.session_state.results_table = pd.concat([
-                    st.session_state.results_table,
-                    pd.DataFrame([['Ensemble', ens_rmse, ens_mae, ens_r2]], columns=['Model', 'RMSE', 'MAE', 'R²'])
-                ], ignore_index=True)
-            else:
-                # no detailed eval arrays available; try a sensible fallback:
-                # compute ensemble metrics as the mean of available numeric metrics
-                model_names = [m[0] for m in model_list]
-                df_res = st.session_state.results_table.copy()
-                # select numeric rows for models that participated in the ensemble
-                numeric = df_res[df_res['Model'].isin(model_names) & df_res['RMSE'].notnull()]
-                if not numeric.empty:
-                    ens_rmse = float(numeric['RMSE'].astype(float).mean())
-                    ens_mae = float(numeric['MAE'].astype(float).mean()) if 'MAE' in numeric.columns and numeric['MAE'].notnull().any() else np.nan
-                    ens_r2 = float(numeric['R²'].astype(float).mean()) if 'R²' in numeric.columns and numeric['R²'].notnull().any() else np.nan
-                else:
-                    ens_rmse = ens_mae = ens_r2 = np.nan
+    #         if len(eval_sources) >= 2:
+    #             # align to the shortest evaluation length (take last values)
+    #             min_len = min([len(ev['y_true']) for ev in eval_sources])
+    #             preds_matrix = np.array([ev['y_pred'][-min_len:] for ev in eval_sources])
+    #             # use first eval source's y_true as reference
+    #             y_true_ref = eval_sources[0]['y_true'][-min_len:]
+    #             ensemble_pred_eval = preds_matrix.mean(axis=0)
+    #             # compute metrics
+    #             ens_rmse = float(np.sqrt(mean_squared_error(y_true_ref, ensemble_pred_eval)))
+    #             ens_mae = float(mean_absolute_error(y_true_ref, ensemble_pred_eval))
+    #             ens_r2 = float(r2_score(y_true_ref, ensemble_pred_eval))
+    #             # store ensemble eval
+    #             st.session_state.ensemble_eval = {
+    #                 'y_true': np.array(y_true_ref).astype(float),
+    #                 'y_pred': np.array(ensemble_pred_eval).astype(float),
+    #                 'rmse': ens_rmse,
+    #                 'mae': ens_mae,
+    #                 'r2': ens_r2
+    #             }
+    #             # append numeric metrics to results table
+    #             st.session_state.results_table = pd.concat([
+    #                 st.session_state.results_table,
+    #                 pd.DataFrame([['Ensemble', ens_rmse, ens_mae, ens_r2]], columns=['Model', 'RMSE', 'MAE', 'R²'])
+    #             ], ignore_index=True)
+    #         else:
+    #             # no detailed eval arrays available; try a sensible fallback:
+    #             # compute ensemble metrics as the mean of available numeric metrics
+    #             model_names = [m[0] for m in model_list]
+    #             df_res = st.session_state.results_table.copy()
+    #             # select numeric rows for models that participated in the ensemble
+    #             numeric = df_res[df_res['Model'].isin(model_names) & df_res['RMSE'].notnull()]
+    #             if not numeric.empty:
+    #                 ens_rmse = float(numeric['RMSE'].astype(float).mean())
+    #                 ens_mae = float(numeric['MAE'].astype(float).mean()) if 'MAE' in numeric.columns and numeric['MAE'].notnull().any() else np.nan
+    #                 ens_r2 = float(numeric['R²'].astype(float).mean()) if 'R²' in numeric.columns and numeric['R²'].notnull().any() else np.nan
+    #             else:
+    #                 ens_rmse = ens_mae = ens_r2 = np.nan
 
-                st.session_state.results_table = pd.concat([
-                    st.session_state.results_table,
-                    pd.DataFrame([['Ensemble', ens_rmse, ens_mae, ens_r2]], columns=['Model', 'RMSE', 'MAE', 'R²'])
-                ], ignore_index=True)
-        else:
-            st.warning("Need at least two model forecasts (Prophet + one DL) to build ensemble.")
+    #             st.session_state.results_table = pd.concat([
+    #                 st.session_state.results_table,
+    #                 pd.DataFrame([['Ensemble', ens_rmse, ens_mae, ens_r2]], columns=['Model', 'RMSE', 'MAE', 'R²'])
+    #             ], ignore_index=True)
+    #     else:
+    #         st.warning("Need at least two model forecasts (Prophet + one DL) to build ensemble.")
 
     # --- Combined Forecast Visualization ---
     st.subheader("📈 Combined Forecast Comparison")
@@ -538,8 +561,8 @@ with tab_forecast:
         combined["CNN"] = np.array(st.session_state.cnn_future).round(2)
     if st.session_state.lstm_future is not None:
         combined["LSTM"] = np.array(st.session_state.lstm_future).round(2)
-    if st.session_state.ensemble_future is not None:
-        combined["Ensemble"] = np.array(st.session_state.ensemble_future).round(2)
+    # if st.session_state.ensemble_future is not None:
+    #     combined["Ensemble"] = np.array(st.session_state.ensemble_future).round(2)
 
     if len(combined.columns) > 1:
         melted = combined.melt(id_vars="Date", var_name="Model", value_name="Predicted")
