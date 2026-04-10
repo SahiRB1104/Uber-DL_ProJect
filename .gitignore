@@ -19,3 +19,6 @@ venv/
 *.pt
 # Ignore assets (images, etc.) used by the dashboard
 assets/
+
+# Ignore generated ETL outputs
+data/
